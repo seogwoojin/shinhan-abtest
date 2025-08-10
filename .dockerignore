@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+target/
+.gradle/
+
+# Frontend
+frontend/my-payment-calendar/node_modules/
+frontend/my-payment-calendar/dist/
+frontend/my-payment-calendar/.env*
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
