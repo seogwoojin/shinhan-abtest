@@ -1,4 +1,4 @@
-package com.example.finsync.calendar.domain
+package com.example.finsync.mydata.domain
 
 import com.example.finsync.mydata.dto.TransactionInfo
 import com.example.finsync.mydata.repository.TransactionJpaRepository
@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 import java.time.LocalDate
-import java.time.LocalDate.now
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 
@@ -20,29 +19,40 @@ class RecurringPaymentService(
      */
     fun getRecurringPayments(username: String): Mono<Map<String, Any>> {
         return Mono.fromCallable {
-            val now = LocalDate.now()
-            val threeMonthsAgo = now.minusMonths(3)
+            try {
+                val now = LocalDate.now()
+                val threeMonthsAgo = now.minusMonths(3)
 
-            val startDate = threeMonthsAgo.format(DateTimeFormatter.ISO_LOCAL_DATE)
-            val endDate = now.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                val startDate = threeMonthsAgo.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                val endDate = now.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
-            // 최근 3개월 거래 내역 조회 (지출만)
-            val transactions = repository.findByUsernameAndDateRange(username, startDate, endDate)
-                .filter { it.tranAmt < 0 } // 지출만 필터링
-                .map { entity ->
-                    TransactionInfo(
-                        tran_dtime = entity.tranDtime,
-                        tran_amt = entity.tranAmt,
-                        currency_code = entity.currencyCode,
-                        merchant_name = entity.merchantName,
-                        tran_type = entity.tranType,
-                        balance_amt = entity.balanceAmt,
-                        category_code = entity.categoryCode,
-                        source = entity.source
-                    )
-                }
+                println("분석 기간: $startDate ~ $endDate")
 
-            analyzeRecurringPatterns(transactions, threeMonthsAgo, now)
+                // 최근 3개월 거래 내역 조회 (지출만)
+                val transactions =
+                    repository.findByUsernameAndDateRange(username, startDate, endDate)
+                        .filter { it.tranAmt < 0 } // 지출만 필터링
+                        .map { entity ->
+                            TransactionInfo(
+                                tran_dtime = entity.tranDtime,
+                                tran_amt = entity.tranAmt,
+                                currency_code = entity.currencyCode,
+                                merchant_name = entity.merchantName,
+                                tran_type = entity.tranType,
+                                balance_amt = entity.balanceAmt,
+                                category_code = entity.categoryCode,
+                                source = entity.source
+                            )
+                        }
+
+                println("총 지출 거래 수: ${transactions.size}")
+
+                analyzeRecurringPatterns(transactions, threeMonthsAgo, now)
+            } catch (e: Exception) {
+                println("getRecurringPayments 오류: ${e.message}")
+                e.printStackTrace()
+                throw e
+            }
         }.subscribeOn(Schedulers.boundedElastic())
     }
 
@@ -197,7 +207,8 @@ class RecurringPaymentService(
                     }.sortedByDescending { abs(it["percentage_difference"] as Double) }
 
                     mapOf(
-                        "current_month" to now().format(DateTimeFormatter.ofPattern("yyyy-MM")),
+                        "current_month" to LocalDate.now()
+                            .format(DateTimeFormatter.ofPattern("yyyy-MM")),
                         "threshold_percentage" to thresholdPercentage,
                         "anomalies" to anomalies,
                         "anomaly_count" to anomalies.size,
@@ -216,102 +227,184 @@ class RecurringPaymentService(
         startDate: LocalDate,
         endDate: LocalDate
     ): Map<String, Any> {
-        // 가맹점별로 그룹화
-        val merchantGroups = transactions
-            .filter { it.merchant_name != null }
-            .groupBy { it.merchant_name!! }
+        try {
+            // 가맹점별로 그룹화
+            val merchantGroups = transactions
+                .filter { it.merchant_name != null }
+                .groupBy { it.merchant_name!! }
 
-        val recurringPayments = merchantGroups.mapNotNull { (merchantName, merchantTransactions) ->
-            if (merchantTransactions.size < 2) return@mapNotNull null // 최소 2회 이상
+            println("분석 대상 가맹점 수: ${merchantGroups.size}")
 
-            val amounts = merchantTransactions.map { abs(it.tran_amt) }
-            val avgAmount = amounts.average()
-            val amountVariance = calculateVariance(amounts.map { it.toDouble() })
+            val recurringPayments =
+                merchantGroups.mapNotNull { (merchantName, merchantTransactions) ->
+                    try {
+                        if (merchantTransactions.size < 2) return@mapNotNull null // 최소 2회 이상
 
-            // 정기성 판단을 위한 날짜 분석
-            val transactionDates = merchantTransactions.map {
-                it.tran_dtime.split("T")[0]
-            }.sorted()
+                        val amounts = merchantTransactions.map { abs(it.tran_amt) }
+                        val avgAmount = amounts.average()
+                        val amountVariance = calculateVariance(amounts.map { it.toDouble() })
 
-            val dayIntervals = calculateDayIntervals(transactionDates)
-            val avgInterval = if (dayIntervals.isNotEmpty()) dayIntervals.average() else 0.0
+                        // 정기성 판단을 위한 날짜 분석
+                        val transactionDates = merchantTransactions.map {
+                            it.tran_dtime.split("T")[0]
+                        }.sorted().distinct() // 중복 날짜 제거
 
-            // 신뢰도 점수 계산 (0-1)
-            val confidenceScore = calculateConfidenceScore(
-                frequency = merchantTransactions.size,
-                amountVariance = amountVariance,
-                avgAmount = avgAmount,
-                intervalConsistency = calculateIntervalConsistency(dayIntervals)
+                        println("거래 날짜들: $transactionDates")
+
+                        val dayIntervals = calculateDayIntervals(transactionDates)
+                        val avgInterval =
+                            if (dayIntervals.isNotEmpty()) dayIntervals.average() else 0.0
+
+                        // 신뢰도 점수 계산 (0-1)
+                        val intervalConsistency = calculateIntervalConsistency(dayIntervals)
+                        val confidenceScore = calculateConfidenceScore(
+                            frequency = merchantTransactions.size,
+                            amountVariance = amountVariance,
+                            avgAmount = avgAmount,
+                            intervalConsistency = intervalConsistency
+                        )
+
+                        // 디버깅 로그
+                        println("Merchant: $merchantName")
+                        println("  Frequency: ${merchantTransactions.size}")
+                        println("  AvgAmount: $avgAmount")
+                        println("  AmountVariance: $amountVariance")
+                        println("  DayIntervals: $dayIntervals")
+                        println("  IntervalConsistency: $intervalConsistency")
+                        println("  ConfidenceScore: $confidenceScore")
+                        println("---")
+
+                        // 정기성 임계값 (신뢰도 0.6 이상)
+                        if (confidenceScore >= 0.6) {
+                            mapOf(
+                                "merchant_name" to merchantName,
+                                "frequency" to merchantTransactions.size,
+                                "average_amount" to avgAmount,
+                                "amount_variance" to amountVariance,
+                                "total_amount" to amounts.sum().toDouble(), // Long을 Double로 변환
+                                "confidence_score" to confidenceScore,
+                                "average_interval_days" to avgInterval,
+                                "category_code" to merchantTransactions.first().category_code,
+                                "transaction_dates" to transactionDates,
+                                "source" to merchantTransactions.first().source
+                            )
+                        } else null
+                    } catch (e: Exception) {
+                        println("가맹점 '$merchantName' 분석 중 오류: ${e.message}")
+                        e.printStackTrace()
+                        null
+                    }
+                }.sortedByDescending { it["confidence_score"] as Double }
+
+            // 카테고리별 요약
+            val categoryBreakdown = try {
+                recurringPayments
+                    .filter { it["category_code"] != null }
+                    .groupBy { it["category_code"] as String }
+                    .mapValues { (_, payments) ->
+                        mapOf(
+                            "payment_count" to payments.size,
+                            "total_amount" to payments.sumOf {
+                                val totalAmount = it["total_amount"]
+                                when (totalAmount) {
+                                    is Double -> totalAmount.toLong()
+                                    is Long -> totalAmount
+                                    else -> 0L
+                                }
+                            },
+                            "avg_confidence" to payments.map { it["confidence_score"] as Double }
+                                .average()
+                        )
+                    }
+            } catch (e: Exception) {
+                println("카테고리 분석 중 오류: ${e.message}")
+                emptyMap<String, Map<String, Any>>()
+            }
+
+            return mapOf(
+                "analysis_period" to mapOf(
+                    "start_date" to startDate.toString(),
+                    "end_date" to endDate.toString(),
+                    "days" to startDate.until(endDate).days
+                ),
+                "recurring_payments" to recurringPayments,
+                "total_recurring_merchants" to recurringPayments.size,
+                "total_recurring_amount" to recurringPayments.sumOf {
+                    val totalAmount = it["total_amount"]
+                    when (totalAmount) {
+                        is Double -> totalAmount.toLong()
+                        is Long -> totalAmount
+                        else -> 0L
+                    }
+                },
+                "monthly_average_recurring" to recurringPayments.sumOf {
+                    val totalAmount = it["total_amount"]
+                    when (totalAmount) {
+                        is Double -> totalAmount.toLong()
+                        is Long -> totalAmount
+                        else -> 0L
+                    }
+                } / 3,
+                "category_breakdown" to categoryBreakdown,
+                "high_confidence_count" to recurringPayments.count {
+                    (it["confidence_score"] as Double) >= 0.8
+                }
             )
-
-            // 정기성 임계값 (신뢰도 0.6 이상)
-            if (confidenceScore >= 0.6) {
-                mapOf(
-                    "merchant_name" to merchantName,
-                    "frequency" to merchantTransactions.size,
-                    "average_amount" to avgAmount,
-                    "amount_variance" to amountVariance,
-                    "total_amount" to amounts.sum(),
-                    "confidence_score" to confidenceScore,
-                    "average_interval_days" to avgInterval,
-                    "category_code" to merchantTransactions.first().category_code,
-                    "transaction_dates" to transactionDates,
-                    "source" to merchantTransactions.first().source
-                )
-            } else null
-        }.sortedByDescending { it["confidence_score"] as Double }
-
-        // 카테고리별 요약
-        val categoryBreakdown = recurringPayments
-            .filter { it["category_code"] != null }
-            .groupBy { it["category_code"] as String }
-            .mapValues { (_, payments) ->
-                mapOf(
-                    "payment_count" to payments.size,
-                    "total_amount" to payments.sumOf { (it["total_amount"] as Double).toLong() },
-                    "avg_confidence" to payments.map { it["confidence_score"] as Double }.average()
-                )
-            }
-
-        return mapOf(
-            "analysis_period" to mapOf(
-                "start_date" to startDate.toString(),
-                "end_date" to endDate.toString(),
-                "days" to startDate.until(endDate).days
-            ),
-            "recurring_payments" to recurringPayments,
-            "total_recurring_merchants" to recurringPayments.size,
-            "total_recurring_amount" to recurringPayments.sumOf {
-                (it["total_amount"] as Double).toLong()
-            },
-            "monthly_average_recurring" to recurringPayments.sumOf {
-                (it["total_amount"] as Double).toLong()
-            } / 3,
-            "category_breakdown" to categoryBreakdown,
-            "high_confidence_count" to recurringPayments.count {
-                (it["confidence_score"] as Double) >= 0.8
-            }
-        )
+        } catch (e: Exception) {
+            println("analyzeRecurringPatterns 전체 오류: ${e.message}")
+            e.printStackTrace()
+            throw e
+        }
     }
 
     private fun calculateVariance(amounts: List<Double>): Double {
+        if (amounts.isEmpty()) return 0.0
+        if (amounts.size == 1) return 0.0 // 단일 값의 경우 분산은 0
+
         val mean = amounts.average()
-        return amounts.map { (it - mean).let { diff -> diff * diff } }.average()
+        val variance = amounts.map { (it - mean).let { diff -> diff * diff } }.average()
+
+        return if (variance.isFinite()) variance else 0.0
     }
 
     private fun calculateDayIntervals(dates: List<String>): List<Double> {
+        if (dates.size < 2) return emptyList()
+
         return dates.zipWithNext { date1, date2 ->
-            val d1 = LocalDate.parse(date1)
-            val d2 = LocalDate.parse(date2)
-            d1.until(d2).days.toDouble()
-        }
+            try {
+                val d1 = LocalDate.parse(date1)
+                val d2 = LocalDate.parse(date2)
+                val daysBetween = java.time.temporal.ChronoUnit.DAYS.between(d1, d2).toDouble()
+                kotlin.math.abs(daysBetween) // 절댓값으로 처리
+            } catch (e: Exception) {
+                println("날짜 파싱 오류: $date1 -> $date2, 오류: ${e.message}")
+                0.0
+            }
+        }.filter { it > 0.0 } // 0일 간격은 제외
     }
 
     private fun calculateIntervalConsistency(intervals: List<Double>): Double {
         if (intervals.isEmpty()) return 0.0
+        if (intervals.size == 1) return 0.8 // 단일 간격의 경우 높은 점수 부여
+
         val avgInterval = intervals.average()
+        if (avgInterval <= 0) return 0.0
+
         val variance = intervals.map { (it - avgInterval).let { diff -> diff * diff } }.average()
-        return 1.0 / (1.0 + variance / avgInterval) // 일관성이 높을수록 1에 가까움
+        if (variance.isNaN() || variance.isInfinite()) return 0.0
+
+        // 간격이 일정할수록 높은 점수 (월간격 기준 최적화)
+        val consistencyScore = when {
+            variance == 0.0 -> 1.0 // 완전히 일치
+            avgInterval >= 28 && avgInterval <= 32 -> { // 월 단위 간격
+                val normalizedVariance = variance / (avgInterval * avgInterval)
+                1.0 / (1.0 + normalizedVariance * 10) // 월단위는 더 관대하게
+            }
+
+            else -> 1.0 / (1.0 + variance / avgInterval)
+        }
+
+        return if (consistencyScore.isFinite()) consistencyScore else 0.0
     }
 
     private fun calculateConfidenceScore(
@@ -320,11 +413,39 @@ class RecurringPaymentService(
         avgAmount: Double,
         intervalConsistency: Double
     ): Double {
-        val frequencyScore = minOf(frequency / 6.0, 1.0) // 6회 이상이면 최대점수
-        val amountConsistencyScore = 1.0 / (1.0 + (amountVariance / avgAmount))
-        val intervalScore = intervalConsistency
+        // 안전한 계산을 위한 검증
+        if (avgAmount <= 0 || amountVariance.isNaN() || intervalConsistency.isNaN()) {
+            return 0.0
+        }
 
-        return (frequencyScore * 0.4 + amountConsistencyScore * 0.3 + intervalScore * 0.3)
+        // 빈도 점수 (3회 이상부터 신뢰도 상승)
+        val frequencyScore = when {
+            frequency >= 6 -> 1.0
+            frequency >= 3 -> frequency / 6.0
+            else -> 0.0
+        }
+
+        // 금액 일관성 점수 계산 (안전한 방식)
+        val amountConsistencyScore = if (avgAmount > 0) {
+            when {
+                amountVariance == 0.0 -> 1.0 // 완전히 동일한 금액
+                else -> {
+                    val varianceRatio = amountVariance / (avgAmount * avgAmount)
+                    1.0 / (1.0 + varianceRatio * 100) // 정규화된 분산 사용
+                }
+            }
+        } else {
+            0.0
+        }
+
+        // 간격 일관성 점수 (NaN 체크)
+        val intervalScore = if (intervalConsistency.isFinite()) intervalConsistency else 0.0
+
+        // 가중 평균 계산 (정기 결제는 간격이 중요하므로 비중 조정)
+        val result = (frequencyScore * 0.3 + amountConsistencyScore * 0.3 + intervalScore * 0.4)
+
+        // 최종 결과 검증
+        return if (result.isFinite()) result else 0.0
     }
 
     private fun calculateNextPaymentDate(transactionDates: List<String>): String {

@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
 
 @RestController
-@RequestMapping("/toss/api/monthly")
+@RequestMapping("/shinhan/api/monthly")
 @CrossOrigin(origins = ["http://localhost:5173"], allowCredentials = "true")
 class MonthlyTransactionController(
     private val monthlyTransactionService: MonthlyTransactionService
@@ -14,7 +14,7 @@ class MonthlyTransactionController(
 
     /**
      * 월별 거래 내역 조회
-     * GET /toss/api/monthly/transactions/{username}?year=2024&month=8
+     * GET /shinhan/api/monthly/transactions/{username}?year=2024&month=8
      */
     @GetMapping("/transactions/{username}")
     fun getMonthlyTransactions(
@@ -46,7 +46,7 @@ class MonthlyTransactionController(
 
     /**
      * 특정 날짜 거래 내역 조회
-     * GET /toss/api/monthly/daily/{username}?date=2024-08-09
+     * GET /shinhan/api/monthly/daily/{username}?date=2024-08-09
      */
     @GetMapping("/daily/{username}")
     fun getDailyTransactions(
@@ -76,7 +76,7 @@ class MonthlyTransactionController(
 
     /**
      * 월별 요약 정보 조회
-     * GET /toss/api/monthly/summary/{username}?year=2024&month=8
+     * GET /shinhan/api/monthly/summary/{username}?year=2024&month=8
      */
     @GetMapping("/summary/{username}")
     fun getMonthlySummary(
@@ -105,7 +105,7 @@ class MonthlyTransactionController(
 
     /**
      * 여러 달의 요약 정보 조회 (차트용)
-     * GET /toss/api/monthly/multi-summary/{username}?startYear=2024&startMonth=1&endYear=2024&endMonth=12
+     * GET /shinhan/api/monthly/multi-summary/{username}?startYear=2024&startMonth=1&endYear=2024&endMonth=12
      */
     @GetMapping("/multi-summary/{username}")
     fun getMultiMonthlySummary(

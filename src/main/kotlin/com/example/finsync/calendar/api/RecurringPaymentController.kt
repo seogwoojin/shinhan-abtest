@@ -1,6 +1,6 @@
 package com.example.finsync.calendar.api
 
-import com.example.finsync.calendar.domain.RecurringPaymentService
+import com.example.finsync.mydata.domain.RecurringPaymentService
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
@@ -30,14 +30,21 @@ class RecurringPaymentController(
                     )
                 )
             }
-            .onErrorReturn(
-                ResponseEntity.badRequest().body(
-                    mapOf(
-                        "result" to "error",
-                        "message" to "정기 지출 분석 중 오류가 발생했습니다."
+            .onErrorResume { error ->
+                println("RecurringPaymentController 오류: ${error.message}")
+                error.printStackTrace()
+
+                Mono.just(
+                    ResponseEntity.badRequest().body(
+                        mapOf(
+                            "result" to "error",
+                            "message" to "정기 지출 분석 중 오류가 발생했습니다: ${error.message}",
+                            "error_type" to error.javaClass.simpleName,
+                            "timestamp" to System.currentTimeMillis()
+                        )
                     )
                 )
-            )
+            }
     }
 
     /**

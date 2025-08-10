@@ -11,7 +11,7 @@ import reactor.core.publisher.Mono
 
 // 7. 토스 통합 마이데이터 서비스
 @Service
-class TossMyDataService(
+class ShinhanMyDataService(
     private val shinhanCardClient: ShinhanCardClient,
     private val shinhanBankClient: ShinhanBankClient,
     private val kbBankClient: KBBankClient,
