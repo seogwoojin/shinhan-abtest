@@ -12,7 +12,7 @@ git clone https://github.com/seogwoojin/shinhan-finsync.git
 cd shinhan-finsync
 docker compose up --build
 
-http://localhost:5173/
+http://localhost:5173/ -> 테스트 유저명 '석우진' 
 ```
 
 ---
